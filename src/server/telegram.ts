@@ -425,6 +425,7 @@ type AdminNotificationPayloads = {
     name: string | null | undefined;
     isGuest?: boolean;
     utmSource?: string | null;
+    signupBonusAmount?: number | null;
   };
   guest_converted: {
     guestUserId: string;
@@ -521,9 +522,15 @@ async function notifyAdminsInternal<K extends AdminNotificationKind>(kind: K, pa
     case 'new_user': {
       const newUser = payload as AdminNotificationPayloads['new_user'];
       const userTypeLabel = newUser.isGuest ? 'Guest session issued' : 'New user joined YumCut';
+      const signupBonusAmount = typeof newUser.signupBonusAmount === 'number' && Number.isFinite(newUser.signupBonusAmount)
+        ? Math.max(0, Math.round(newUser.signupBonusAmount))
+        : 0;
       lines.push(`👤 ${userTypeLabel}`);
       lines.push(`Name: ${newUser.name?.trim() || '—'}`);
       lines.push(`Email: ${newUser.email || '—'}`);
+      lines.push(signupBonusAmount > 0
+        ? `Signup bonus: ${signupBonusAmount.toLocaleString()} tokens`
+        : 'Signup bonus: No signup bonus');
       if (newUser.utmSource?.trim()) {
         lines.push(`Source: ${newUser.utmSource.trim()}`);
       }

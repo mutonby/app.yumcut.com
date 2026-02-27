@@ -168,14 +168,16 @@ export const authOptions: NextAuthOptions = {
       if (!user?.id) return;
       const utmSource = await readUtmSourceCookieFromRequest();
       const languageContext = await readSignUpLanguageContextFromRequest();
+      let signupBonusAmount = 0;
       try {
-        await grantConfiguredSignUpBonus({
+        const signupBonusResult = await grantConfiguredSignUpBonus({
           userId: user.id,
           initiatorTag: 'signup',
           preferredLanguage: (user as any).preferredLanguage,
           languageHint: languageContext.languageHint,
           callbackUrl: languageContext.callbackUrl,
         });
+        signupBonusAmount = signupBonusResult.amount;
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error('Failed to grant signup tokens', e);
@@ -184,6 +186,7 @@ export const authOptions: NextAuthOptions = {
         userId: user.id,
         email: user.email,
         name: user.name,
+        signupBonusAmount,
         ...(utmSource ? { utmSource } : {}),
       }).catch((err) => {
         // eslint-disable-next-line no-console

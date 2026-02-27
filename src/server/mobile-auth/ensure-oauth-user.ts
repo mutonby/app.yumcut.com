@@ -133,16 +133,18 @@ function resolveEmailVerified(value: OAuthProfile['emailVerified']) {
 }
 
 async function afterUserCreated(user: { id: string; email: string; preferredLanguage?: string | null }, name?: string | null) {
+  let signupBonusAmount = 0;
   try {
-    await grantConfiguredSignUpBonus({
+    const signupBonusResult = await grantConfiguredSignUpBonus({
       userId: user.id,
       initiatorTag: 'signup-mobile',
       preferredLanguage: user.preferredLanguage,
     });
+    signupBonusAmount = signupBonusResult.amount;
   } catch (err) {
     console.error('Failed to grant signup tokens (mobile auth)', err);
   }
-  notifyAdminsOfNewUser({ userId: user.id, email: user.email, name }).catch((err) => {
+  notifyAdminsOfNewUser({ userId: user.id, email: user.email, name, signupBonusAmount }).catch((err) => {
     console.error('Failed to notify admins about new mobile user', err);
   });
 }
