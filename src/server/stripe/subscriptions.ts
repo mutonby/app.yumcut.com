@@ -196,14 +196,16 @@ function getSubscriptionCurrentPeriodEndUnix(subscription: Stripe.Subscription) 
 
 function mapStripeCancellationState(subscription: Stripe.Subscription) {
   const currentPeriodEnd = getSubscriptionCurrentPeriodEndUnix(subscription);
+  const hasScheduledCancellation =
+    subscription.cancel_at_period_end === true || subscription.cancel_at !== null;
   const effectiveUnix =
     subscription.cancel_at ??
-    (subscription.cancel_at_period_end ? currentPeriodEnd : null) ??
+    (hasScheduledCancellation ? currentPeriodEnd : null) ??
     null;
   return {
-    cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
+    cancelAtPeriodEnd: hasScheduledCancellation,
     cancellationEffectiveAt:
-      subscription.cancel_at_period_end && effectiveUnix !== null
+      hasScheduledCancellation && effectiveUnix !== null
         ? coerceUnixSecondsToDate(effectiveUnix).toISOString()
         : null,
   };
