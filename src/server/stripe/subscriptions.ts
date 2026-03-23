@@ -186,7 +186,85 @@ async function findCustomerIdFromLatestStripeSubscription(userId: string) {
   }
 }
 
-async function getStripeCancellationStatus(userId: string) {
+function mapStripeCancellationState(subscription: Stripe.Subscription) {
+  const effectiveUnix =
+    subscription.cancel_at ??
+    subscription.canceled_at ??
+    null;
+  return {
+    cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
+    cancellationEffectiveAt:
+      effectiveUnix !== null ? coerceUnixSecondsToDate(effectiveUnix).toISOString() : null,
+  };
+}
+
+function isStripeSubscriptionActiveLike(status: Stripe.Subscription.Status) {
+  return (
+    status === 'active' ||
+    status === 'trialing' ||
+    status === 'past_due' ||
+    status === 'unpaid' ||
+    status === 'incomplete'
+  );
+}
+
+function stripeSubscriptionSortTimestamp(subscription: Stripe.Subscription) {
+  return (
+    subscription.cancel_at ??
+    subscription.canceled_at ??
+    subscription.created ??
+    0
+  );
+}
+
+function pickBestSubscriptionCandidate(
+  subscriptions: Stripe.Subscription[],
+  expectedProductId: string | null,
+) {
+  if (subscriptions.length === 0) return null;
+  const sorted = [...subscriptions].sort((left, right) => {
+    const leftPlan = getPlanFromSubscription(left)?.plan;
+    const rightPlan = getPlanFromSubscription(right)?.plan;
+    const leftMatches = Boolean(expectedProductId && leftPlan?.productId === expectedProductId);
+    const rightMatches = Boolean(expectedProductId && rightPlan?.productId === expectedProductId);
+    if (leftMatches !== rightMatches) return leftMatches ? -1 : 1;
+
+    const leftActiveLike = isStripeSubscriptionActiveLike(left.status);
+    const rightActiveLike = isStripeSubscriptionActiveLike(right.status);
+    if (leftActiveLike !== rightActiveLike) return leftActiveLike ? -1 : 1;
+
+    const leftTs = stripeSubscriptionSortTimestamp(left);
+    const rightTs = stripeSubscriptionSortTimestamp(right);
+    if (leftTs !== rightTs) return rightTs - leftTs;
+    return (right.created ?? 0) - (left.created ?? 0);
+  });
+  return sorted[0] ?? null;
+}
+
+async function getStripeCancellationStatus(userId: string, expectedProductId: string | null) {
+  const stripe = getStripeClient();
+  const customerId =
+    (await findCustomerIdFromPurchaseHistory(userId)) ??
+    (await findCustomerIdFromLatestStripeSubscription(userId));
+
+  if (customerId) {
+    try {
+      const listed = await stripe.subscriptions.list({
+        customer: customerId,
+        status: 'all',
+        limit: 20,
+      });
+      const candidate = pickBestSubscriptionCandidate(listed.data, expectedProductId);
+      if (candidate) return mapStripeCancellationState(candidate);
+    } catch (error) {
+      logStripeSubscriptionEvent('cancellation_status_list_failed', {
+        userId,
+        customerId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const subscriptionId = await findLatestStripeSubscriptionId(userId);
   if (!subscriptionId) {
     return {
@@ -195,17 +273,9 @@ async function getStripeCancellationStatus(userId: string) {
     };
   }
 
-  const stripe = getStripeClient();
   try {
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-    const cancellationEffectiveAt =
-      subscription.cancel_at !== null
-        ? coerceUnixSecondsToDate(subscription.cancel_at).toISOString()
-        : null;
-    return {
-      cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
-      cancellationEffectiveAt,
-    };
+    return mapStripeCancellationState(subscription);
   } catch (error) {
     logStripeSubscriptionEvent('cancellation_status_lookup_failed', {
       userId,
@@ -619,7 +689,7 @@ export async function getWebSubscriptionStatus(userId: string): Promise<Subscrip
       )
     : false;
   const cancellationStatus = stripeReady
-    ? await getStripeCancellationStatus(userId)
+    ? await getStripeCancellationStatus(userId, baseStatus.productId)
     : { cancelAtPeriodEnd: false, cancellationEffectiveAt: null as string | null };
   const cancellationEffectiveAt =
     cancellationStatus.cancellationEffectiveAt ??
