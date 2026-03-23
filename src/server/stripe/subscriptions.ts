@@ -262,6 +262,40 @@ function pickBestSubscriptionCandidate(
 async function getStripeCancellationStatus(userId: string, expectedProductId: string | null) {
   const stripe = getStripeClient();
   const expectedSubscriptionId = await findLatestStripeSubscriptionId(userId);
+  const latestInvoice = await prisma.subscriptionPurchase.findFirst({
+    where: {
+      userId,
+      transactionId: {
+        startsWith: 'in_',
+      },
+    },
+    orderBy: [{ expiresDate: 'desc' }, { purchaseDate: 'desc' }],
+    select: {
+      transactionId: true,
+    },
+  });
+  const latestInvoiceId = normalizeId(latestInvoice?.transactionId);
+
+  if (latestInvoiceId) {
+    try {
+      const invoice = await stripe.invoices.retrieve(latestInvoiceId);
+      const invoiceSubscriptionId = getSubscriptionIdFromInvoice(invoice as Stripe.Invoice);
+      if (invoiceSubscriptionId) {
+        const invoiceSubscription = await stripe.subscriptions.retrieve(invoiceSubscriptionId);
+        const invoicePlan = getPlanFromSubscription(invoiceSubscription)?.plan;
+        const planMatches = !expectedProductId || invoicePlan?.productId === expectedProductId;
+        if (planMatches) {
+          return mapStripeCancellationState(invoiceSubscription);
+        }
+      }
+    } catch (error) {
+      logStripeSubscriptionEvent('cancellation_status_invoice_lookup_failed', {
+        userId,
+        latestInvoiceId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   if (expectedSubscriptionId) {
     try {
